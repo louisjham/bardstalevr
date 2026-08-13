@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>The Bard's Tale XR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    <script>
+      window.litDisableBundleWarning = true;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+          "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@^1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.56/dist/index.min.js",
+          "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.56/dist/index.min.js",
+          "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.56/dist/index.min.js",
+          "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.12.1/dist/signals-core.mjs",
+          "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/addons/",
+          "uiblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/addons/uiblocks/src/index.js",
+          "@google/genai": "https://cdn.jsdelivr.net/npm/@google/genai/+esm"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import 'https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/addons/simulator/SimulatorAddons.js';
+      import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js';
+      import * as xb from 'https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/xrblocks.js';
+      import * as uikit from 'https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.56/dist/index.min.js';
+      import { UICore, UIPanel, UIText, ManipulationBehavior, raycastSortFunction } from 'https://cdn.jsdelivr.net/npm/xrblocks@0.16.0/build/addons/uiblocks/src/index.js';
+
+      // ==========================================
+      // MODULE: world/skara-brae
+      // ==========================================
+      class SkaraBrae {
+        constructor(scene) {
+          this.scene = scene;
+          this.gridSize = 2.0; // 2 meters per tile
+          this.map = [
+            [1, 1, 1, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [1, 0, 1, 1, 1, 0, 1],
+            [1, 0, 1, 0, 0, 0, 1],
+            [1, 0, 1, 0, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [1, 1, 1, 1, 1, 1, 1],
+          ];
+          this.wallMaterial = new THREE.MeshPhongMaterial({ color: 0x3a3f4b, shininess: 10 });
+          this.floorMaterial = new THREE.MeshPhongMaterial({ color: 0x21252b });
+          this.ceilingMaterial = new THREE.MeshPhongMaterial({ color: 0x111111 });
+          this.baseMaterial = new THREE.MeshPhongMaterial({ color: 0x5c4033 }); // Wooden base for AR diorama
+          this.geometry = new THREE.BoxGeometry(this.gridSize, this.gridSize, this.gridSize);
+          this.planeGeom = new THREE.PlaneGeometry(this.gridSize, this.gridSize);
+          this.build();
+        }
+
+        build() {
+          this.root = new THREE.Group();
+          
+          // Build the AR Diorama Base (visible clearly in AR scale)
+          const mapWidth = this.map[0].length * this.gridSize;
+          const mapDepth = this.map.length * this.gridSize;
+          const baseMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(mapWidth + 0.5, 1.0, mapDepth + 0.5),
+            this.baseMaterial
+          );
+          baseMesh.position.set((mapWidth/2) - (this.gridSize/2), -0.5, (mapDepth/2) - (this.gridSize/2));
+          this.root.add(baseMesh);
+
+          for (let z = 0; z < this.map.length; z++) {
+            for (let x = 0; x < this.map[z].length; x++) {
+              // Floor
+              const floor = new THREE.Mesh(this.planeGeom, this.floorMaterial);
+              floor.rotation.x = -Math.PI / 2;
+              floor.position.set(x * this.gridSize, 0, z * this.gridSize);
+              this.root.add(floor);
+
+              // Ceiling
+              const ceiling = new THREE.Mesh(this.planeGeom, this.ceilingMaterial);
+              ceiling.rotation.x = Math.PI / 2;
+              ceiling.position.set(x * this.gridSize, this.gridSize, z * this.gridSize);
+              this.root.add(ceiling);
+
+              if (this.map[z][x] === 1) {
+                const wall = new THREE.Mesh(this.geometry, this.wallMaterial);
+                wall.position.set(x * this.gridSize, this.gridSize / 2, z * this.gridSize);
+                this.root.add(wall);
+              }
+            }
+          }
+        }
+      }
+
+      // ==========================================
+      // MODULE: ui/spatial-hud
+      // ==========================================
+      class SpatialHUD {
+        constructor(uiCore, onAction) {
+          this.uiCore = uiCore;
+          
+          // Helper to create buttons
+          const createBtn = (label, actionStr, width = 140) => {
+            let isHovered = false;
+            const btn = new UIPanel({
+              width: width, height: 70, cornerRadius: 15, fillColor: '#4b5263',
+              justifyContent: 'center', alignItems: 'center',
+              onClick: () => onAction(actionStr),
+              onHoverEnter: () => { isHovered = true; btn.setFillColor('#5c6370'); },
+              onHoverExit: () => { isHovered = false; btn.setFillColor('#4b5263'); },
+            });
+            btn.add(new UIText(label, { fontSize: 24, color: '#ffffff' }));
+            return btn;
+          };
+
+          // 1. Movement Command Table (Center)
+          this.moveCard = uiCore.createCard({
+            name: 'MovementCard', sizeX: 0.8, sizeY: 0.4,
+            position: new THREE.Vector3(0, 0.8, -0.6),
+            behaviors: [new ManipulationBehavior({ draggable: true })]
+          });
+          const movePanel = new UIPanel({
+            width: '100%', height: '100%', fillColor: 'rgba(30, 30, 35, 0.85)',
+            cornerRadius: 30, padding: 20, flexDirection: 'column',
+            justifyContent: 'space-between', alignItems: 'center',
+          });
+          this.moveCard.add(movePanel);
+          
+          const buttonRow = new UIPanel({ flexDirection: 'row', gap: 20, width: '100%', justifyContent: 'center' });
+          movePanel.add(buttonRow);
+          buttonRow.add(createBtn('Turn Left', 'left'));
+          buttonRow.add(createBtn('Forward', 'forward'));
+          buttonRow.add(createBtn('Turn Right', 'right'));
+
+          const utilityRow = new UIPanel({ flexDirection: 'row', gap: 20, width: '100%', justifyContent: 'center', marginTop: 10 });
+          movePanel.add(utilityRow);
+          utilityRow.add(createBtn('Toggle AR/VR', 'toggle_xr', 200));
+
+          // Combat Command Table (Initially Hidden)
+          this.combatCard = uiCore.createCard({
+            name: 'CombatCard', sizeX: 0.8, sizeY: 0.4,
+            position: new THREE.Vector3(0, 0.8, -0.5),
+            behaviors: [new ManipulationBehavior({ draggable: true })]
+          });
+          this.combatCard.visible = false;
+          const combatPanel = new UIPanel({
+            width: '100%', height: '100%', fillColor: 'rgba(80, 20, 25, 0.95)',
+            cornerRadius: 30, padding: 20, flexDirection: 'column',
+            justifyContent: 'space-between', alignItems: 'center',
+          });
+          this.combatCard.add(combatPanel);
+          
+          this.turnText = new UIText("Turn: Brian", { fontSize: 32, color: '#ffffff', fontWeight: 'bold' });
+          combatPanel.add(this.turnText);
+
+          const cBtnRow = new UIPanel({ flexDirection: 'row', gap: 20, width: '100%', justifyContent: 'center' });
+          combatPanel.add(cBtnRow);
+          cBtnRow.add(createBtn('Attack', 'combat_attack', 120));
+          cBtnRow.add(createBtn('Sing/Cast', 'combat_special', 160));
+          cBtnRow.add(createBtn('Flee', 'combat_flee', 120));
+
+          // 2. Party Status Panel (Left)
+          this.partyCard = uiCore.createCard({
+            name: 'PartyCard', sizeX: 0.6, sizeY: 0.8,
+            position: new THREE.Vector3(-0.9, 1.2, -0.8),
+            behaviors: [new ManipulationBehavior({ draggable: true })]
+          });
+          const partyPanel = new UIPanel({
+            width: '100%', height: '100%', fillColor: 'rgba(20, 20, 25, 0.9)',
+            cornerRadius: 20, padding: 20, flexDirection: 'column', alignItems: 'flex-start', gap: 15
+          });
+          this.partyCard.add(partyPanel);
+          partyPanel.add(new UIText("Party Status", { fontSize: 36, color: '#e5c07b', fontWeight: 'bold' }));
+          partyPanel.add(new UIText("1. Brian the Bard [HP: 24/24]", { fontSize: 24, color: '#98c379' }));
+          partyPanel.add(new UIText("2. Elric the Mage [HP: 12/12]", { fontSize: 24, color: '#61afef' }));
+          partyPanel.add(new UIText("3. Conan the Fighter [HP: 35/35]", { fontSize: 24, color: '#e06c75' }));
+
+          // 3. Combat Log & Info Panel (Right)
+          this.logCard = uiCore.createCard({
+            name: 'LogCard', sizeX: 0.6, sizeY: 0.8,
+            position: new THREE.Vector3(0.9, 1.2, -0.8),
+            behaviors: [new ManipulationBehavior({ draggable: true })]
+          });
+          const logPanel = new UIPanel({
+            width: '100%', height: '100%', fillColor: 'rgba(20, 20, 25, 0.9)',
+            cornerRadius: 20, padding: 20, flexDirection: 'column', alignItems: 'flex-start', gap: 15
+          });
+          this.logCard.add(logPanel);
+          logPanel.add(new UIText("Event Log", { fontSize: 36, color: '#e5c07b', fontWeight: 'bold' }));
+          this.statusText = new UIText("Entering Skara Brae...", { fontSize: 24, color: '#abb2bf' });
+          logPanel.add(this.statusText);
+        }
+
+        updateStatus(text) {
+          this.statusText.text = text;
+        }
+      }
+
+      // ==========================================
+      // MODULE: objects/auto-map
+      // ==========================================
+      class AutoMapParchment extends xb.Script {
+        constructor(dungeonMap) {
+          super();
+          this.dungeonMap = dungeonMap;
+          this.isGrabbing = false;
+          this.handToObject = null;
+
+          this.holsterPos = new THREE.Vector3(-0.4, 0.8, -0.3);
+          this.holsterRot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/6, 0, 0));
+          
+          this.discovered = Array(dungeonMap.length).fill(null).map(() => Array(dungeonMap[0].length).fill(false));
+        }
+
+        init() {
+          this.position.copy(this.holsterPos);
+          this.quaternion.copy(this.holsterRot);
+
+          const planeGeom = new THREE.BoxGeometry(0.4, 0.01, 0.4);
+          const mat = new THREE.MeshPhongMaterial({ color: 0xf5deb3 });
+          this.mesh = new THREE.Mesh(planeGeom, mat);
+          this.add(this.mesh);
+
+          this.panel = new xb.SpatialPanel({
+            width: 0.38,
+            height: 0.38,
+            backgroundColor: '#00000000',
+            showEdge: false,
+          });
+          this.panel.rotation.x = -Math.PI / 2;
+          this.panel.position.y = 0.01;
+          this.add(this.panel);
+
+          const grid = this.panel.addGrid();
+          grid.addRow({ weight: 0.2 }).addText({ text: "Skara Brae Map", fontSize: 0.04, fontColor: '#5c4033' });
+          this.mapText = grid.addRow({ weight: 0.8 }).addText({ text: "", fontSize: 0.03, fontColor: '#3a2318' });
+          
+          this.updateMapDisplay(1, 1);
+        }
+
+        updateMapDisplay(px, pz) {
+          this.discovered[pz][px] = true;
+          let str = "";
+          for (let z = 0; z < this.dungeonMap.length; z++) {
+            for (let x = 0; x < this.dungeonMap[z].length; x++) {
+              if (x === px && z === pz) {
+                str += " @ ";
+              } else if (!this.discovered[z][x]) {
+                str += " ? ";
+              } else if (this.dungeonMap[z][x] === 1) {
+                str += " # ";
+              } else {
+                str += " . ";
+              }
+            }
+            str += "\n";
+          }
+          if (this.mapText) this.mapText.text = str;
+        }
+
+        onSelectStart(event) {
+          const controller = event.hand || event.target;
+          const intersections = xb.core.input.intersectObjectByController(controller, this.mesh);
+          if (intersections.length === 0) return;
+
+          if (this.isGrabbing) return;
+          this.isGrabbing = true;
+          this.grabbingHand = controller;
+          
+          this.updateMatrixWorld(true);
+          this.grabbingHand.updateMatrixWorld(true);
+
+          const H0 = new THREE.Matrix4().copy(this.grabbingHand.matrixWorld);
+          const O0 = new THREE.Matrix4().copy(this.matrixWorld);
+          this.handToObject = new THREE.Matrix4().copy(H0).invert().multiply(O0);
+        }
+
+        onSelecting(event) {
+          if (!this.isGrabbing || !this.handToObject) return;
+          const hand = event.hand || event.target;
+          if (hand !== this.grabbingHand) return;
+
+          hand.updateMatrixWorld(true);
+          const H = new THREE.Matrix4().copy(hand.matrixWorld);
+          const O = new THREE.Matrix4().multiplyMatrices(H, this.handToObject);
+          
+          const parentInv = this.parent ? new THREE.Matrix4().copy(this.parent.matrixWorld).invert() : new THREE.Matrix4().identity();
+          const Olocal = new THREE.Matrix4().multiplyMatrices(parentInv, O);
+          
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3();
+          Olocal.decompose(pos, quat, scl);
+
+          this.position.copy(pos);
+          this.quaternion.copy(quat);
+        }
+
+        onSelectEnd(event) {
+          if (!this.isGrabbing) return;
+          const hand = event.hand || event.target;
+          if (hand !== this.grabbingHand) return;
+          
+          this.isGrabbing = false;
+          this.handToObject = null;
+          this.grabbingHand = null;
+        }
+
+        update() {
+          if (!this.isGrabbing) {
+            const dt = xb.getDeltaTime();
+            this.position.lerp(this.holsterPos, 5 * dt);
+            this.quaternion.slerp(this.holsterRot, 5 * dt);
+          }
+        }
+      }
+
+      // ==========================================
+      // MODULE: agents/game-director
+      // ==========================================
+      class GameDirector {
+        constructor() {
+          this.state = 'EXPLORE';
+          this.isProcessing = false;
+          this.encounterThreshold = 0.25; // Base encounter probability
+        }
+
+        get ai() {
+          return xb.core.ai; // Access XRBlocks AI singleton
+        }
+        
+        async onPlayerMove(x, z, engine, mapParchment) {
+           if (mapParchment) {
+               mapParchment.updateMapDisplay(x, z);
+           }
+           
+           // 1. Read User State (Party Health)
+           const party = engine.party;
+           const totalHp = party.reduce((sum, char) => sum + char.hp, 0);
+           const maxHp = party.reduce((sum, char) => sum + char.maxHp, 0);
+           const healthRatio = totalHp / maxHp;
+
+           // 2. Subtle Difficulty Tuning & Encounter Pacing
+           let currentThreshold = this.encounterThreshold;
+           if (healthRatio < 0.4) {
+             currentThreshold *= 0.3; // Pacing: Give a heavily wounded party a massive break to avoid frustrating death loops
+           }
+
+           // 3. Emit Director Actions
+           if (Math.random() < currentThreshold) {
+              this.state = 'COMBAT';
+              engine.startCombat();
+              this.triggerEncounterFlavor(x, z, engine.hud);
+           } else {
+              this.state = 'EXPLORE';
+              this.triggerAmbientFlavor(x, z, engine.hud, healthRatio);
+           }
+        }
+
+        async triggerAmbientFlavor(x, z, hud, healthRatio) {
+          if (!this.ai || !this.ai.isAvailable() || this.isProcessing) {
+            hud.updateStatus(`Exploration - Pos: (${x}, ${z})\nThe air is damp and cold.`);
+            return;
+          }
+          this.isProcessing = true;
+          hud.updateStatus(`Exploring (${x}, ${z})...\nListening to the dark...`);
+          
+          try {
+            // Dynamic Narration based on World and User state
+            const prompt = `You are a cryptic Dungeon Master in a dark fantasy game. The party is at grid (${x}, ${z}). Their health is ${Math.round(healthRatio*100)}%. Write exactly 1 short, atmospheric sentence describing what they see or hear. If health is low, make it sound ominous. Keep it under 15 words.`;
+            const response = await this.ai.query({ type: 'text', text: prompt });
+            hud.updateStatus(response.text);
+          } catch (e) {
+            hud.updateStatus(`Exploration - Pos: (${x}, ${z})\nThe silence is deafening.`);
+          }
+          
+          this.isProcessing = false;
+        }
+
+        async triggerEncounterFlavor(x, z, hud) {
+          if (!this.ai || !this.ai.isAvailable()) return;
+          try {
+            const prompt = `You are a Dungeon Master. The party just got ambushed by monsters in a dungeon. Write 1 short, exciting sentence to start the battle.`;
+            const response = await this.ai.query({ type: 'text', text: prompt });
+            hud.updateStatus(response.text);
+          } catch (e) {}
+        }
+      }
+
+      // ==========================================
+      // MODULE: core/combat
+      // ==========================================
+      class CombatArena {
+        constructor(parentGroup, uiCore, onTarget) {
+          this.root = new THREE.Group();
+          // Place arena 3 meters in front of the party
+          this.root.position.set(0, 0, -3.0); 
+          parentGroup.add(this.root);
+          
+          this.uiCore = uiCore;
+          this.onTarget = onTarget;
+          this.enemies = [];
+          this.targetCards = [];
+          
+          // Spatial Indicator for Bard Songs / Buffs
+          this.auraLight = new THREE.PointLight(0xe5c07b, 0, 10);
+          this.auraLight.position.set(0, 2, 0);
+          this.root.add(this.auraLight);
+        }
+
+        spawnEnemies(count) {
+          this.clear();
+          const geom = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 8);
+          const mat = new THREE.MeshPhongMaterial({ color: 0x556b2f }); // Goblin green
+          
+          const spacing = 1.0;
+          const startX = -(count - 1) * spacing / 2;
+
+          for(let i=0; i<count; i++) {
+            // 3D Representation
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(startX + (i * spacing), 0.6, 0);
+            this.root.add(mesh);
+            this.enemies.push({ id: i, mesh: mesh, hp: 10 });
+
+            // Diegetic Targeting UI floating above monster
+            const tCard = this.uiCore.createCard({
+               name: `Target_${i}`, sizeX: 0.4, sizeY: 0.2,
+               position: new THREE.Vector3(mesh.position.x, 1.8, this.root.position.z),
+            });
+            const tPanel = new UIPanel({
+               width: '100%', height: '100%', fillColor: 'rgba(200, 50, 50, 0.8)',
+               cornerRadius: 15, justifyContent: 'center', alignItems: 'center',
+               onClick: () => this.onTarget(i)
+            });
+            tCard.add(tPanel);
+            tPanel.add(new UIText(`Target ${i+1}`, { fontSize: 24, color: 'white' }));
+            tCard.visible = false; // Only show when TARGETING
+            this.targetCards.push(tCard);
+          }
+        }
+
+        setTargetingMode(enabled) {
+          this.targetCards.forEach(card => card.visible = enabled);
+        }
+
+        triggerBardSong() {
+           // Spatial Indicator of Buffs (Aura flare)
+           this.auraLight.intensity = 3.0;
+           setTimeout(() => { this.auraLight.intensity = 0; }, 1500);
+        }
+
+        clear() {
+          this.enemies.forEach(e => this.root.remove(e.mesh));
+          this.targetCards.forEach(c => { if(c.parent) c.parent.remove(c); });
+          this.enemies = [];
+          this.targetCards = [];
+        }
+      }
+
+      class CombatEngine {
+        constructor(hud, arena, director) {
+           this.hud = hud;
+           this.arena = arena;
+           this.director = director;
+           
+           // Rules Data Hooks
+           this.party = [
+             { name: "Brian the Bard", hp: 24, maxHp: 24, role: 'bard' },
+             { name: "Elric the Mage", hp: 12, maxHp: 12, role: 'mage' },
+             { name: "Conan the Fighter", hp: 35, maxHp: 35, role: 'fighter' }
+           ];
+           this.activeIdx = 0;
+           this.state = 'INACTIVE'; // INACTIVE, WAITING, TARGETING
+        }
+
+        startCombat() {
+           this.state = 'WAITING';
+           this.director.state = 'COMBAT';
+           this.activeIdx = 0;
+           
+           this.hud.moveCard.visible = false;
+           this.hud.combatCard.visible = true;
+           
+           const enemyCount = Math.floor(Math.random() * 3) + 2; // 2 to 4 enemies
+           this.arena.spawnEnemies(enemyCount);
+           
+           this.hud.updateStatus(`Combat! ${enemyCount} Goblins draw near!`);
+           this.updateCombatUI();
+        }
+
+        updateCombatUI() {
+           const activeChar = this.party[this.activeIdx];
+           this.hud.turnText.text = `Turn: ${activeChar.name}`;
+           this.arena.setTargetingMode(this.state === 'TARGETING');
+        }
+
+        handleAction(action) {
+           if (this.state === 'TARGETING') {
+              // Cancel targeting if clicked outside
+              this.state = 'WAITING';
+              this.updateCombatUI();
+              return;
+           }
+
+           const activeChar = this.party[this.activeIdx];
+
+           if (action === 'combat_attack') {
+              this.state = 'TARGETING';
+              this.hud.updateStatus(`Select a target for ${activeChar.name}...`);
+              this.updateCombatUI();
+           } 
+           else if (action === 'combat_special') {
+              if (activeChar.role === 'bard') {
+                 this.hud.updateStatus(`${activeChar.name} plays Traveller's Tune!\nParty AC improved.`);
+                 this.arena.triggerBardSong();
+              } else {
+                 this.hud.updateStatus(`${activeChar.name} casts a spell!`);
+              }
+              this.nextTurn();
+           }
+           else if (action === 'combat_flee') {
+              this.endCombat("Escaped combat!");
+           }
+        }
+
+        resolveTarget(enemyIdx) {
+           const activeChar = this.party[this.activeIdx];
+           const dmg = Math.floor(Math.random() * 10) + 1;
+           this.hud.updateStatus(`${activeChar.name} hits Goblin ${enemyIdx+1} for ${dmg} dmg!`);
+           
+           // In a full game: reduce enemy HP here, check death, play animation
+           this.state = 'WAITING';
+           this.nextTurn();
+        }
+
+        nextTurn() {
+           this.activeIdx++;
+           if (this.activeIdx >= this.party.length) {
+              // End of round: enemy turn logic goes here
+              this.activeIdx = 0;
+              this.hud.updateStatus(this.hud.statusText.text + "\nEnemies miss their attacks!");
+           }
+           this.updateCombatUI();
+        }
+
+        endCombat(msg) {
+           this.state = 'INACTIVE';
+           this.director.state = 'EXPLORE';
+           this.hud.moveCard.visible = true;
+           this.hud.combatCard.visible = false;
+           this.arena.clear();
+           this.hud.updateStatus(msg);
+        }
+      }
+
+      // ==========================================
+      // MODULE: core/game-loop
+      // ==========================================
+      class BardsTaleGame extends xb.Script {
+        constructor() {
+          super();
+          this.uiCore = new UICore(this);
+          this.gameDirector = new GameDirector();
+          
+          this.playerPos = { x: 1, z: 1 };
+          this.playerDir = 2; // 0=N(-Z), 1=E(+X), 2=S(+Z), 3=W(-X)
+          
+          this.targetPos = new THREE.Vector3();
+          this.targetRot = new THREE.Euler();
+
+          // Scale for transition
+          this.currentScale = 1.0;
+          this.targetScale = 1.0;
+        }
+
+        async init() {
+          if (xb.core.input.raycaster) {
+            xb.core.input.raycaster.sortFunction = raycastSortFunction;
+          }
+
+          this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
+          const dirLight = new THREE.DirectionalLight(0xffaaaa, 1.0);
+          dirLight.position.set(2, 5, 2);
+          this.add(dirLight);
+
+          this.dungeon = new SkaraBrae(this);
+          this.hud = new SpatialHUD(this.uiCore, (action) => this.handleAction(action));
+          
+          // Spatial Translation System Hierarchy
+          // dioramaOffset: Anchors the whole system in space (AR table vs VR origin)
+          // worldPivot: Rotates the dungeon to simulate player turning
+          // worldOffset: Translates the dungeon to simulate player stepping
+          this.dioramaOffset = new THREE.Group();
+          
+          this.mapParchment = new AutoMapParchment(this.dungeon.map);
+          xb.add(this.mapParchment); // Register with XB script system for update/events
+          this.dioramaOffset.add(this.mapParchment); // Attach visually
+          
+          this.combatArena = new CombatArena(this.dioramaOffset, this.uiCore, (idx) => {
+              if (this.combatEngine) this.combatEngine.resolveTarget(idx);
+          });
+          this.combatEngine = new CombatEngine(this.hud, this.combatArena, this.gameDirector);
+          this.worldPivot = new THREE.Group();
+          this.worldOffset = new THREE.Group();
+          
+          this.dioramaOffset.add(this.worldPivot);
+          this.worldPivot.add(this.worldOffset);
+          this.worldOffset.add(this.dungeon.root);
+          this.add(this.dioramaOffset);
+
+          this.updateWorldTransform(true);
+        }
+
+        handleAction(action) {
+          if (action === 'toggle_xr') {
+            if (!xb.core.transition) return;
+            if (xb.core.transition.currentMode === 'AR') {
+              xb.core.transition.toVR({color: 0x000000});
+              this.hud.updateStatus("Entered Full VR Mode");
+              this.targetScale = 1.0;
+            } else {
+              xb.core.transition.toAR();
+              this.hud.updateStatus("Entered AR Diorama Mode.\nLook at the table!");
+              this.targetScale = 0.05; // 1:20 Scale miniature
+            }
+            return;
+          }
+
+          if (this.gameDirector.state === 'COMBAT') {
+              this.combatEngine.handleAction(action);
+              return;
+          }
+
+          if (action === 'forward') {
+            let nx = this.playerPos.x;
+            let nz = this.playerPos.z;
+            if (this.playerDir === 0) nz -= 1;
+            if (this.playerDir === 1) nx += 1;
+            if (this.playerDir === 2) nz += 1;
+            if (this.playerDir === 3) nx -= 1;
+
+            if (this.dungeon.map[nz] && this.dungeon.map[nz][nx] === 0) {
+              this.playerPos.x = nx;
+              this.playerPos.z = nz;
+              this.gameDirector.onPlayerMove(nx, nz, this.combatEngine, this.mapParchment);
+            }
+          } else if (action === 'left') {
+            this.playerDir = (this.playerDir + 3) % 4;
+          } else if (action === 'right') {
+            this.playerDir = (this.playerDir + 1) % 4;
+          }
+          
+          this.updateWorldTransform(false);
+        }
+
+        updateWorldTransform(instant) {
+          const cx = this.playerPos.x * this.dungeon.gridSize;
+          const cz = this.playerPos.z * this.dungeon.gridSize;
+          const angle = this.playerDir * (Math.PI / 2);
+
+          this.targetPos.set(-cx, 0, -cz);
+          this.targetRot.set(0, angle, 0);
+
+          if (instant) {
+            this.worldOffset.position.copy(this.targetPos);
+            this.worldPivot.rotation.copy(this.targetRot);
+          }
+        }
+
+        update() {
+          const dt = xb.getDeltaTime();
+          
+          // Smooth grid interpolation
+          this.worldOffset.position.lerp(this.targetPos, 10 * dt);
+          const currentQuat = this.worldPivot.quaternion;
+          const targetQuat = new THREE.Quaternion().setFromEuler(this.targetRot);
+          currentQuat.slerp(targetQuat, 10 * dt);
+
+          // Smooth scale and AR placement transition
+          this.currentScale += (this.targetScale - this.currentScale) * (10 * dt);
+          this.dioramaOffset.scale.set(this.currentScale, this.currentScale, this.currentScale);
+          
+          // In AR (scale < 1), move the diorama down and forward onto a virtual table
+          // In VR (scale 1), keep it centered on the user
+          const arPos = new THREE.Vector3(0, 0.8, -1.2); 
+          const vrPos = new THREE.Vector3(0, 0, 0);
+          const lerpFactor = (1.0 - this.currentScale) / 0.95; // 0 when VR, 1 when AR
+          
+          this.dioramaOffset.position.lerpVectors(vrPos, arPos, lerpFactor);
+        }
+      }
+
+      const API_KEY = ""; // Gemini API Key hook for AI Studio
+
+      const options = new xb.Options();
+      options.enableUI();
+      options.enableXRTransitions();
+      options.uikit.enable(uikit);
+      options.enableAI();
+      if (API_KEY) {
+        options.ai.gemini.apiKey = API_KEY;
+      }
+      
+      // Enable XR Realism features for AR occlusion
+      options.depth = new xb.DepthOptions(xb.xrDepthMeshOptions);
+      options.depth.occlusion.enabled = true;
+      
+      options.setAppTitle("Bard's Tale XR");
+
+      document.addEventListener('DOMContentLoaded', async () => {
+        xb.add(new BardsTaleGame());
+        await xb.init(options);
+      });
+    </script>
+  </body>
+</html>
